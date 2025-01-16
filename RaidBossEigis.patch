@@ -1,0 +1,1320 @@
+### Eclipse Workspace Patch 1.0
+#P L2J_Mobius_11.3_Shinemaker
+diff --git dist/game/data/scripts/ai/bosses/Eigis/Eigis.java dist/game/data/scripts/ai/bosses/Eigis/Eigis.java
+index 41a7fd6..4e663df 100644
+--- dist/game/data/scripts/ai/bosses/Eigis/Eigis.java
++++ dist/game/data/scripts/ai/bosses/Eigis/Eigis.java
+@@ -1,74 +1,121 @@
+ /*
+  * This file is part of the L2J Mobius project.
+- *
++ * 
+  * This program is free software: you can redistribute it and/or modify
+  * it under the terms of the GNU General Public License as published by
+  * the Free Software Foundation, either version 3 of the License, or
+  * (at your option) any later version.
+- *
++ * 
+  * This program is distributed in the hope that it will be useful,
+  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+  * General Public License for more details.
+- *
++ * 
+  * You should have received a copy of the GNU General Public License
+  * along with this program. If not, see <http://www.gnu.org/licenses/>.
+  */
+ package ai.bosses.Eigis;
+ 
++import java.lang.ref.WeakReference;
++import java.util.ArrayList;
+ import java.util.Calendar;
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++import java.util.concurrent.atomic.AtomicBoolean;
++import java.util.concurrent.atomic.AtomicInteger;
++import java.util.concurrent.atomic.AtomicReference;
+ 
+ import org.l2jmobius.commons.threads.ThreadPool;
++import org.l2jmobius.commons.util.Rnd;
+ import org.l2jmobius.gameserver.data.SpawnTable;
+ import org.l2jmobius.gameserver.data.xml.NpcData;
++import org.l2jmobius.gameserver.data.xml.SkillData;
++import org.l2jmobius.gameserver.enums.SkillFinishType;
+ import org.l2jmobius.gameserver.instancemanager.DBSpawnManager;
+ import org.l2jmobius.gameserver.instancemanager.GlobalVariablesManager;
++import org.l2jmobius.gameserver.instancemanager.ZoneManager;
+ import org.l2jmobius.gameserver.model.Location;
+ import org.l2jmobius.gameserver.model.Spawn;
++import org.l2jmobius.gameserver.model.actor.Creature;
+ import org.l2jmobius.gameserver.model.actor.Npc;
+ import org.l2jmobius.gameserver.model.actor.Player;
+ import org.l2jmobius.gameserver.model.actor.templates.NpcTemplate;
++import org.l2jmobius.gameserver.model.holders.SkillHolder;
++import org.l2jmobius.gameserver.model.skill.Skill;
++import org.l2jmobius.gameserver.model.zone.ZoneType;
++import org.l2jmobius.gameserver.model.zone.type.ArenaZone;
++import org.l2jmobius.gameserver.network.serverpackets.MagicSkillUse;
+ 
+ import ai.AbstractNpcAI;
+ 
+ /**
+- * @author NasSeKa
++ * @author Notorion
+  */
+ public class Eigis extends AbstractNpcAI
+ {
+-	// NPC
+-	private static final int EIGIS = 29385;
+-	// Misc
++	
++	private static final int EIGIS = 29385; // RaidBoss Eigis
+ 	private static final Location EIGIS_LOCATION = new Location(-23172, -222237, -3504);
+ 	private static final String EIGIS_ALIVE_VAR = "EIGIS_ALIVE";
++	private static final int INVISIBLE_NPC = 18919;
++	private static final int INVISIBLE_NPC_2 = 18920;
++	
++	// Skills
++	private static final SkillHolder COMMON_SKILL = new SkillHolder(34108, 1); // Blade of Souls
++	private static final SkillHolder SPECIAL_AOE_1 = new SkillHolder(34113, 1); // Dark Wave Spray
++	private static final SkillHolder SPECIAL_AOE_VISUAL_2 = new SkillHolder(34114, 1); // Gate of Thousand Flashes
++	private static final SkillHolder JUMP_TARGET_VISUAL_1 = new SkillHolder(34116, 1); // Dark Shadow Clash
++	private static final SkillHolder JUMP_SKILL_DAMAGE_2 = new SkillHolder(34109, 1); // Blade Temptation
++	private static final SkillHolder JUMP_IMPACT_VISUAL_3 = new SkillHolder(34110, 1); // Price for Temptation
++	private static final SkillHolder NPC_AOE_SKILL = new SkillHolder(34115, 1); // Tear to Shreds
++	private static final int NPC_LIFETIME = 6000;
++	
++	// Barrier
++	private static final int BARRIER_DURATION_MILLIS = 600000; // 10 minutes
++	private static final int HIT_COUNT = 2000; // 2000 Number of attacks needed to destroy the barrier
++	private static final int HIT_COUNT_RENEW = 500; // 500 hits in 60 seconds to continue without the barrier
++	private static final int RENEW_DURATION_MILLIS = 600000; // 60 seconds of vulnerability
++	private static final SkillHolder LIMIT_BARRIER = new SkillHolder(29515, 1);
++	private boolean barrierActivated = false;
++	
++	// Misc
++	private boolean specialActivated = false;
++	private final AtomicBoolean isUsingSpecialSkill = new AtomicBoolean(false);
++	private final AtomicBoolean isUsingSpecialSkill2 = new AtomicBoolean(false);
++	private final AtomicBoolean isUsingSpecialSkill3 = new AtomicBoolean(false);
++	private boolean bossInCombat = false;
++	private final AtomicInteger targetLossCount = new AtomicInteger(0);
++	private boolean vulnerablePhase = false;
++	private final Map<Npc, Integer> eigisHits = new ConcurrentHashMap<>();
++	
++	private static final ArenaZone EigisZone = ZoneManager.getInstance().getZoneByName("Eigis_Seat_Zone", ArenaZone.class);
++	
++	public static double calculateDistance3D(int x1, int y1, int z1, int x2, int y2, int z2)
++	{
++		return Math.sqrt(Math.pow(x1 - x2, 2) + Math.pow(y1 - y2, 2) + Math.pow(z1 - z2, 2));
++	}
+ 	
+ 	public Eigis()
+ 	{
++		addAttackId(EIGIS);
++		addSpawnId(EIGIS);
+ 		addKillId(EIGIS);
++		addAggroRangeEnterId(EIGIS);
++		long currentTime = System.currentTimeMillis();
++		Calendar calendarEigisStart = Calendar.getInstance();
++		Calendar calendarEigisSeal = Calendar.getInstance();
+ 		
+-		final long currentTime = System.currentTimeMillis();
+-		final Calendar calendarEigisStart = Calendar.getInstance();
+-		final Calendar calendarEigisSeal = Calendar.getInstance();
+-		
+-		calendarEigisStart.set(Calendar.DAY_OF_WEEK, 1); // Sunday
++		calendarEigisStart.set(Calendar.DAY_OF_WEEK, Calendar.SUNDAY);
+ 		calendarEigisStart.set(Calendar.HOUR_OF_DAY, 23);
+ 		calendarEigisStart.set(Calendar.MINUTE, 0);
+ 		calendarEigisStart.set(Calendar.SECOND, 0);
+ 		
+-		calendarEigisSeal.set(Calendar.DAY_OF_WEEK, 2); // Monday
++		calendarEigisSeal.set(Calendar.DAY_OF_WEEK, Calendar.MONDAY);
+ 		calendarEigisSeal.set(Calendar.HOUR_OF_DAY, 2);
+ 		calendarEigisSeal.set(Calendar.MINUTE, 0);
+ 		calendarEigisSeal.set(Calendar.SECOND, 0);
+ 		
+-		if (((currentTime > calendarEigisStart.getTimeInMillis()) && (currentTime < calendarEigisSeal.getTimeInMillis())) && (SpawnTable.getInstance().getAnySpawn(EIGIS) == null) && GlobalVariablesManager.getInstance().getBoolean(EIGIS_ALIVE_VAR, true))
+-		{
+-			spawnEigis();
+-		}
+-		else
+-		{
+-			despawnEigis();
+-		}
+-		
+ 		if (calendarEigisStart.getTimeInMillis() < currentTime)
+ 		{
+ 			calendarEigisStart.add(Calendar.WEEK_OF_YEAR, 1);
+@@ -78,42 +125,674 @@
+ 			calendarEigisSeal.add(Calendar.WEEK_OF_YEAR, 1);
+ 		}
+ 		
+-		ThreadPool.scheduleAtFixedRate(() ->
++		boolean bossAlive = GlobalVariablesManager.getInstance().getBoolean(EIGIS_ALIVE_VAR, false);
++		if (bossAlive && (SpawnTable.getInstance().getAnySpawn(EIGIS) == null))
+ 		{
+ 			spawnEigis();
+-		}, calendarEigisStart.getTimeInMillis() - currentTime, 604800000); // 7 days
+-		
+-		ThreadPool.scheduleAtFixedRate(() ->
++		}
++		else if (!bossAlive && (SpawnTable.getInstance().getAnySpawn(EIGIS) != null))
+ 		{
+ 			despawnEigis();
+-		}, calendarEigisSeal.getTimeInMillis() - currentTime, 604800000); // 7 days
++		}
++		
++		ThreadPool.scheduleAtFixedRate(this::spawnEigis, calendarEigisStart.getTimeInMillis() - currentTime, 604800000L); // 7 days
++		
++		ThreadPool.scheduleAtFixedRate(this::despawnEigis, calendarEigisSeal.getTimeInMillis() - currentTime, 604800000L); // 7 days
+ 	}
+ 	
+ 	private void spawnEigis()
+ 	{
+ 		try
+ 		{
+-			final NpcTemplate template = NpcData.getInstance().getTemplate(EIGIS);
+-			final Spawn spawn = new Spawn(template);
+-			spawn.setXYZ(EIGIS_LOCATION);
+-			spawn.setHeading(0);
+-			spawn.setRespawnDelay(0);
+-			DBSpawnManager.getInstance().addNewSpawn(spawn, false);
+-			GlobalVariablesManager.getInstance().set(EIGIS_ALIVE_VAR, true);
++			if (!GlobalVariablesManager.getInstance().getBoolean(EIGIS_ALIVE_VAR, false) || (SpawnTable.getInstance().getAnySpawn(EIGIS) == null))
++			{
++				NpcTemplate template = NpcData.getInstance().getTemplate(EIGIS);
++				Spawn spawn = new Spawn(template);
++				spawn.setXYZ(EIGIS_LOCATION);
++				spawn.setHeading(0);
++				spawn.setRespawnDelay(0);
++				Npc boss = DBSpawnManager.getInstance().addNewSpawn(spawn, false);
++				GlobalVariablesManager.getInstance().set(EIGIS_ALIVE_VAR, true);
++				LOGGER.info("Eigis: Spawn successfully.");
++				boss.setRandomWalking(false);
++				boss.setRandomAnimation(false);
++			}
+ 		}
+ 		catch (Exception e)
+ 		{
++			LOGGER.warning("Eigis: Failure when giving spawn.");
+ 			e.printStackTrace();
+ 		}
+ 	}
+ 	
+ 	private void despawnEigis()
+ 	{
+-		if (SpawnTable.getInstance().getAnySpawn(EIGIS) != null)
++		try
+ 		{
+-			for (Npc npc : SpawnTable.getInstance().getAnySpawn(EIGIS).getSpawnedNpcs())
++			if (SpawnTable.getInstance().getAnySpawn(EIGIS) != null)
+ 			{
+-				npc.deleteMe();
++				for (Npc npc : SpawnTable.getInstance().getAnySpawn(EIGIS).getSpawnedNpcs())
++				{
++					npc.deleteMe();
++				}
++				GlobalVariablesManager.getInstance().set(EIGIS_ALIVE_VAR, false);
++				LOGGER.info("Eigis: Despaw, carried out successfully.");
++			}
++		}
++		catch (Exception e)
++		{
++			LOGGER.warning("Eigis: Failure when giving despaw.");
++			e.printStackTrace();
++		}
++	}
++	
++	@Override
++	public String onSpawn(Npc npc)
++	{
++		if (npc.getId() == EIGIS)
++		{
++			bossInCombat = false;
++			startQuestTimer("checkCombatStatus", 1000, npc, null, true);
++			startQuestTimer("checkPosition", 5000, npc, null, true);
++		}
++		return super.onSpawn(npc);
++	}
++	
++	@Override
++	public String onAggroRangeEnter(Npc npc, Player player, boolean isSummon)
++	{
++		if (npc.getId() == EIGIS)
++		{
++			bossInCombat = true;
++			cancelQuestTimer("checkTargetLost", npc, null);
++			checkCombatStatus(npc);
++			if (specialActivated && (npc.getCurrentHp() < (npc.getMaxHp() * 0.99)))
++			{
++				activateSpecialMechanics(npc);
++			}
++		}
++		return super.onAggroRangeEnter(npc, player, isSummon);
++	}
++	
++	@Override
++	public String onExitZone(Creature creature, ZoneType zone)
++	{
++		if ((creature instanceof Npc) && (creature.getId() == EIGIS))
++		{
++			Npc npc = (Npc) creature;
++			
++			if ((zone instanceof ArenaZone) && zone.getName().equals("Eigis_Seat_Zone"))
++			{
++				npc.teleToLocation(EIGIS_LOCATION);
++				npc.setTarget(null);
++				cancelSpecialSkills(npc);
++			}
++		}
++		return super.onExitZone(creature, zone);
++	}
++	
++	@Override
++	public String onAttack(Npc npc, Player attacker, int damage, boolean isSummon, Skill skill)
++	{
++		if (npc.getId() == EIGIS)
++		{
++			if (!barrierActivated)
++			{
++				barrierActivated = true;
++				LIMIT_BARRIER.getSkill().applyEffects(npc, npc);
++				npc.setInvul(true);
++				startQuestTimer("remove_barrier", BARRIER_DURATION_MILLIS, npc, null);
++				eigisHits.put(npc, 0);
++			}
++			
++			if (vulnerablePhase)
++			{
++				int hits = eigisHits.getOrDefault(npc, 0) + 1;
++				eigisHits.put(npc, hits);
++				
++				if (hits >= HIT_COUNT_RENEW)
++				{
++					cancelQuestTimer("activate_barrier", npc, null);
++					startQuestTimer("activate_barrier", RENEW_DURATION_MILLIS, npc, null);
++					eigisHits.put(npc, 0);
++				}
++			}
++			else
++			{
++				int hits = eigisHits.getOrDefault(npc, 0) + 1;
++				eigisHits.put(npc, hits);
++				
++				if (hits >= HIT_COUNT)
++				{
++					npc.stopSkillEffects(LIMIT_BARRIER.getSkill());
++					npc.setInvul(false);
++					cancelQuestTimer("remove_barrier", npc, null);
++					vulnerablePhase = true;
++					startQuestTimer("activate_barrier", RENEW_DURATION_MILLIS, npc, null);
++					eigisHits.put(npc, 0);
++				}
++			}
++			
++			bossInCombat = true;
++			if (!specialActivated && (npc.getCurrentHp() < (npc.getMaxHp() * 0.99)))
++			{
++				specialActivated = true;
++				activateSpecialMechanics(npc);
++			}
++		}
++		return super.onAttack(npc, attacker, damage, isSummon, skill);
++	}
++	
++	private void activateSpecialMechanics(Npc npc)
++	{
++		if (bossInCombat)
++		{
++			startQuestTimer("SkillsBalancer", 2000, npc, null);
++		}
++	}
++	
++	@Override
++	public String onEvent(String event, Npc npc, Player player)
++	{
++		if ((npc != null) && (npc.getId() == EIGIS))
++		{
++			switch (event)
++			{
++				case "activate_barrier":
++					barrierActivated = true;
++					LIMIT_BARRIER.getSkill().applyEffects(npc, npc);
++					npc.setInvul(true);
++					vulnerablePhase = false;
++					startQuestTimer("remove_barrier", BARRIER_DURATION_MILLIS, npc, null);
++					eigisHits.put(npc, 0);
++					break;
++				
++				case "remove_barrier":
++					barrierActivated = false;
++					npc.stopSkillEffects(LIMIT_BARRIER.getSkill());
++					npc.setInvul(false);
++					eigisHits.put(npc, 0);
++					break;
++				case "EigisSkills1":
++				{
++					if (bossInCombat && !isUsingSpecialSkill2.get() && !isUsingSpecialSkill3.get())
++					{
++						useEigisSkills1(npc);
++					}
++					break;
++				}
++				
++				case "EigisSkills2":
++				{
++					if (bossInCombat && !isUsingSpecialSkill.get() && !isUsingSpecialSkill3.get())
++					{
++						useEigisSkills2(npc);
++					}
++					break;
++				}
++				case "EigisSkills3":
++				{
++					if (bossInCombat && !isUsingSpecialSkill.get() && !isUsingSpecialSkill2.get())
++					{
++						useEigisSkills3(npc);
++					}
++					break;
++				}
++				case "SkillsBalancer":
++				{
++					if (bossInCombat)
++					{
++						if (!npc.isDead() && !isUsingSpecialSkill.get() && !isUsingSpecialSkill2.get() && !isUsingSpecialSkill3.get())
++						{
++							boolean hasValidTarget = false;
++							for (WeakReference<Creature> targetRef : npc.getAttackByList())
++							{
++								Creature target = targetRef.get();
++								if ((target != null) && (target instanceof Player) && !target.isDead() && npc.isInsideRadius3D(target, 2000))
++								{
++									hasValidTarget = true;
++									break;
++								}
++							}
++							
++							if (hasValidTarget)
++							{
++								int chance = getRandom(100);
++								
++								if (chance < 33)
++								{
++									useEigisSkills1(npc);
++								}
++								else if (chance < 66)
++								{
++									useEigisSkills2(npc);
++								}
++								else
++								{
++									useEigisSkills3(npc);
++								}
++								startQuestTimer("SkillsBalancer", getRandom(10000, 35000), npc, null);
++							}
++							else
++							{
++								cancelQuestTimer("SkillsBalancer", npc, null);
++								bossInCombat = false;
++								specialActivated = false;
++								resetSkillFlags();
++							}
++						}
++						
++					}
++					else
++					{
++						cancelQuestTimer("SkillsBalancer", npc, null);
++					}
++					break;
++				}
++				
++				case "checkTargetRange":
++				{
++					if ((player != null) && !player.isDead())
++					{
++						int distance = (int) calculateDistance3D(npc.getX(), npc.getY(), npc.getZ(), player.getX(), player.getY(), player.getZ());
++						
++						if ((distance < 700) || (distance > 2000))
++						{
++							targetLossCount.incrementAndGet();
++							if (targetLossCount.get() >= 2)
++							{
++								cancelSkill3(npc);
++							}
++							else
++							{
++								AtomicReference<Player> newTarget = new AtomicReference<>();
++								if (findTargetPlayer(npc, newTarget))
++								{
++									player = newTarget.get();
++								}
++								else
++								{
++									cancelSkill3(npc);
++								}
++							}
++						}
++					}
++					else
++					{
++						cancelSkill3(npc);
++					}
++					break;
++				}
++				case "checkCombatStatus":
++				{
++					checkCombatStatus(npc);
++					break;
++				}
++				case "checkTargetLost":
++				{
++					cancelSpecialSkills(npc);
++					break;
++				}
++				case "checkPosition":
++				{
++					if (!EigisZone.isInsideZone(npc))
++					{
++						npc.teleToLocation(EIGIS_LOCATION);
++						npc.setTarget(null);
++						
++					}
++					break;
++				}
++			}
++		}
++		return super.onEvent(event, npc, player);
++	}
++	
++	private void useEigisSkills1(Npc npc)
++	{
++		if (!bossInCombat || !isUsingSpecialSkill.compareAndSet(false, true))
++		{
++			return;
++		}
++		
++		if (npc.getAttackByList().isEmpty())
++		{
++			return;
++		}
++		
++		npc.disableSkill(COMMON_SKILL.getSkill(), 8000);
++		cancelDebuffs(npc);
++		
++		ThreadPool.schedule(() ->
++		{
++			if (!npc.isDead() && bossInCombat)
++			{
++				
++				boolean useComeToMe = Rnd.get(100) < 48;
++				
++				if (useComeToMe)
++				{
++					ThreadPool.schedule(() ->
++					{
++						useComeToMeSkill(npc);
++					}, 1000);
++				}
++				
++				ThreadPool.schedule(() ->
++				{
++					if (!npc.isDead() && bossInCombat)
++					{
++						npc.doCast(SPECIAL_AOE_1.getSkill());
++					}
++				}, 3000);
++				
++				ThreadPool.schedule(() ->
++				{
++					if (!npc.isDead() && bossInCombat && isUsingSpecialSkill.get())
++					{
++						npc.broadcastPacket(new MagicSkillUse(npc, npc, SPECIAL_AOE_VISUAL_2.getSkillId(), 1, 0, 0));
++					}
++				}, 4000);
++			}
++			
++			ThreadPool.schedule(() ->
++			{
++				resetSkillFlags();
++			}, 4000);
++			
++		}, 1000);
++	}
++	
++	// Presentation skill Lv.1 Teleport (34388)
++	private void useComeToMeSkill(Npc npc)
++	{
++		npc.doCast(SkillData.getInstance().getSkill(34388, 1));
++		
++		ThreadPool.schedule(() ->
++		{
++			
++		}, 1000);
++	}
++	
++	private void cancelDebuffs(Npc npc)
++	{
++		if ((npc == null) || npc.isDead())
++		{
++			return;
++		}
++		npc.getEffectList().getEffects().forEach(effect ->
++		{
++			if (effect.getSkill().isDebuff())
++			{
++				npc.getEffectList().stopSkillEffects(SkillFinishType.REMOVED, effect.getSkill());
++			}
++		});
++	}
++	
++	private void useEigisSkills2(Npc npc)
++	{
++		if (!bossInCombat || !isUsingSpecialSkill2.compareAndSet(false, true))
++		{
++			return;
++		}
++		
++		npc.disableSkill(COMMON_SKILL.getSkill(), 7000);
++		cancelDebuffs(npc);
++		
++		ThreadPool.schedule(() ->
++		{
++			if (Rnd.get(100) < 45)
++			{
++				useComeToMeSkill(npc);
++			}
++		}, 1000);
++		
++		// Presentation Skill Lv.1 Tear to Shreds (34392)
++		ThreadPool.schedule(() ->
++		{
++			npc.doCast(SkillData.getInstance().getSkill(34392, 1));
++		}, 3000);
++		
++		if (npc.getAttackByList().isEmpty())
++		{
++			return;
++		}
++		
++		if (EigisZone == null)
++		{
++			return;
++		}
++		
++		ThreadPool.schedule(() ->
++		{
++			final Location bossLocation = npc.getLocation();
++			List<Npc> spawnedNpcs = new ArrayList<>();
++			
++			for (int i = 0; i < 6; i++)
++			{
++				for (int j = 0; j < 6; j++)
++				{
++					int x = bossLocation.getX() + (int) ((i - 2.5) * 500);
++					int y = bossLocation.getY() + (int) ((j - 2.5) * 500);
++					Location spawnLoc = new Location(x, y, bossLocation.getZ());
++					
++					if (!EigisZone.isInsideZone(spawnLoc))
++					{
++						continue;
++					}
++					
++					Npc newNpc = addSpawn(INVISIBLE_NPC, spawnLoc, false, NPC_LIFETIME);
++					newNpc.setHeading(0);
++					// newNpc.setName("Swords Eigis");
++					spawnedNpcs.add(newNpc);
++					newNpc.setInvul(true);
++					ThreadPool.schedule(() ->
++					{
++						if (!newNpc.isDead())
++						{
++							newNpc.doCast(NPC_AOE_SKILL.getSkill());
++						}
++					}, 4000);
++				}
++			}
++			
++			ThreadPool.schedule(() ->
++			{
++				List<Npc> spawnedNpcsCopy = new ArrayList<>(spawnedNpcs);
++				for (Npc npcYellow : spawnedNpcsCopy)
++				{
++					Location loc = npcYellow.getLocation();
++					int npcHeading = getRandom(0, 65535);
++					Location spawnLoc = calculatePointFromLocation(loc.getX(), loc.getY(), loc.getZ(), 100, npcHeading);
++					
++					if (!EigisZone.isInsideZone(spawnLoc))
++					{
++						continue;
++					}
++					
++					Npc newNpc = addSpawn(INVISIBLE_NPC_2, spawnLoc, false, NPC_LIFETIME);
++					// newNpc.setName("Swords Eigis");
++					spawnedNpcs.add(newNpc);
++					newNpc.setInvul(true);
++					ThreadPool.schedule(() ->
++					{
++						if (!newNpc.isDead())
++						{
++							newNpc.setHeading(npcHeading);
++							newNpc.teleToLocation(newNpc.getX(), newNpc.getY(), newNpc.getZ(), npcHeading);
++							
++							ThreadPool.schedule(() ->
++							{
++								if (!newNpc.isDead())
++								{
++									newNpc.doCast(NPC_AOE_SKILL.getSkill());
++								}
++							}, 4000);
++						}
++					}, 50);
++				}
++			}, 1000);
++			
++			ThreadPool.schedule(() ->
++			{
++				resetSkillFlags();
++			}, 4000);
++			
++		}, 5000);
++	}
++	
++	private Location calculatePointFromLocation(int x, int y, int z, int distance, int heading)
++	{
++		double angle = Math.toRadians(heading * 0.0054931640625);
++		int newX = x + (int) (distance * Math.cos(angle));
++		int newY = y + (int) (distance * Math.sin(angle));
++		return new Location(newX, newY, z);
++	}
++	
++	private void useEigisSkills3(Npc npc)
++	{
++		if (!bossInCombat || !isUsingSpecialSkill3.compareAndSet(false, true))
++		{
++			return;
++		}
++		
++		npc.disableSkill(COMMON_SKILL.getSkill(), 8000);
++		AtomicReference<Player> targetPlayer = new AtomicReference<>();
++		
++		ThreadPool.schedule(() ->
++		{
++			if (!findTargetPlayer(npc, targetPlayer))
++			{
++				cancelSkill3(npc);
++				npc.enableSkill(COMMON_SKILL.getSkill());
++				return;
++			}
++			
++			Player target = targetPlayer.get();
++			if ((target != null) && !target.isDead())
++			{
++				npc.setTarget(target);
++				
++				ThreadPool.schedule(() ->
++				{
++					if (!npc.isDead() && bossInCombat)
++					{
++						npc.setTarget(target);
++						npc.broadcastPacket(new MagicSkillUse(npc, target, JUMP_TARGET_VISUAL_1.getSkillId(), 1, 3000, 0));
++					}
++				}, 2000);
++				
++				ThreadPool.schedule(() ->
++				{
++					if (!npc.isDead() && bossInCombat)
++					{
++						npc.setTarget(target);
++						npc.doCast(JUMP_SKILL_DAMAGE_2.getSkill());
++					}
++				}, 1000);
++				
++				ThreadPool.schedule(() ->
++				{
++					if (!npc.isDead() && bossInCombat)
++					{
++						npc.broadcastPacket(new MagicSkillUse(npc, target, JUMP_IMPACT_VISUAL_3.getSkillId(), 1, 2000, 0));
++						
++						isUsingSpecialSkill3.set(false);
++					}
++					else
++					{
++					}
++				}, 6000);
++			}
++			else
++			{
++				cancelSkill3(npc);
++				npc.enableSkill(COMMON_SKILL.getSkill());
++			}
++		}, 1000);
++	}
++	
++	private boolean findTargetPlayer(Npc npc, AtomicReference<Player> targetPlayer)
++	{
++		List<Player> playersInRange = new ArrayList<>();
++		
++		for (WeakReference<Creature> targetRef : npc.getAttackByList())
++		{
++			Creature target = targetRef.get();
++			if ((target != null) && (target instanceof Player))
++			{
++				Player player = (Player) target;
++				
++				double distance = npc.calculateDistance3D(player);
++				
++				if ((distance >= 700) && (distance <= 2000))
++				{
++					playersInRange.add(player);
++				}
++			}
++		}
++		
++		if (!playersInRange.isEmpty())
++		{
++			targetPlayer.set(playersInRange.get(Rnd.get(playersInRange.size())));
++			return true;
++		}
++		return false;
++	}
++	
++	private void resetSkillFlags()
++	{
++		isUsingSpecialSkill.set(false);
++		isUsingSpecialSkill2.set(false);
++		isUsingSpecialSkill3.set(false);
++	}
++	
++	private void cancelSkill3(Npc npc)
++	{
++		cancelQuestTimer("checkTargetRange", npc, null);
++		resetSkillFlags();
++	}
++	
++	private void cancelSpecialSkills(Npc npc)
++	{
++		isUsingSpecialSkill.set(false);
++		isUsingSpecialSkill2.set(false);
++		isUsingSpecialSkill3.set(false);
++		npc.enableSkill(COMMON_SKILL.getSkill());
++		cancelQuestTimer("SkillsBalancer", npc, null);
++	}
++	
++	private void checkCombatStatus(Npc npc)
++	{
++		if (bossInCombat)
++		{
++			boolean hasTarget = false;
++			for (WeakReference<Creature> targetRef : npc.getAttackByList())
++			{
++				Creature target = targetRef.get();
++				if ((target != null) && !target.isDead())
++				{
++					hasTarget = true;
++					break;
++				}
++			}
++			
++			if (!hasTarget)
++			{
++				bossInCombat = false;
++				startQuestTimer("checkTargetLost", 8000, npc, null);
++			}
++			else
++			{
++				cancelQuestTimer("checkTargetLost", npc, null);
++			}
++		}
++		else
++		{
++			if (specialActivated)
++			{
++				cancelSpecialSkills(npc);
++				specialActivated = false;
+ 			}
+ 		}
+ 	}
+@@ -123,9 +802,24 @@
+ 	{
+ 		if (npc.getId() == EIGIS)
+ 		{
++			bossInCombat = false;
++			specialActivated = false;
++			isUsingSpecialSkill.set(false);
++			isUsingSpecialSkill2.set(false);
++			isUsingSpecialSkill3.set(false);
+ 			GlobalVariablesManager.getInstance().set(EIGIS_ALIVE_VAR, false);
++			npc.setInvul(false);
++			eigisHits.clear();
++			barrierActivated = false;
++			vulnerablePhase = false;
++			cancelQuestTimer("SkillsBalancer", npc, null);
++			cancelQuestTimer("checkTargetLost", npc, null);
++			cancelQuestTimer("checkCombatStatus", npc, null);
++			cancelQuestTimer("checkPosition", npc, null);
++			cancelQuestTimer("activate_barrier", npc, null);
++			cancelQuestTimer("remove_barrier", npc, null);
++			
+ 		}
+-		
+ 		return super.onKill(npc, killer, isSummon);
+ 	}
+ 	
+diff --git dist/game/data/stats/npcs/29300-29399.xml dist/game/data/stats/npcs/29300-29399.xml
+index b62002d..261367f 100644
+--- dist/game/data/stats/npcs/29300-29399.xml
++++ dist/game/data/stats/npcs/29300-29399.xml
+@@ -5595,25 +5595,25 @@
+ 		</dropLists>
+ 	</npc>
+ 	<npc id="29385" level="127" type="RaidBoss" name="Eigis" title="Lady of Despair">
+-		<!-- AUTO GENERATED NPC TODO: FIX IT -->
+ 		<race>UNDEAD</race>
+ 		<sex>MALE</sex>
+ 		<acquire exp="4003411775" sp="3603071" />
+ 		<stats str="164" int="188" dex="55" wit="78" con="111" men="149">
+-			<vitals hp="800175000" hpRegen="13.4" mp="68076" mpRegen="30" />
+-			<attack physical="639686" magical="583012" random="10" critical="4" accuracy="5" attackSpeed="253" type="SWORD" range="40" distance="80" width="120" />
++			<vitals hp="800175000" hpRegen="150075.4" mp="68076" mpRegen="30" />
++			<attack physical="639686" magical="583012" random="10" critical="4" accuracy="5" attackSpeed="253" type="SWORD" range="150" distance="150" width="120" />
+ 			<defence physical="301296" magical="1458092" />
+ 			<speed>
+ 				<walk ground="60" />
+ 				<run ground="180" />
+ 			</speed>
+-			<hitTime>600</hitTime>
++			<hitTime>950</hitTime>
+ 			<attribute>
+ 				<attack type="DARK" value="2550" />
+ 				<defence fire="2650" water="2650" wind="2650" earth="2650" holy="2600" dark="2650" />
+ 			</attribute>
+ 		</stats>
+ 		<status attackable="true" />
++		<ai type="MAGE" clanHelpRange="2000" aggroRange="2000" />
+ 		<collision>
+ 			<radius normal="36" />
+ 			<height normal="123" />
+@@ -5625,6 +5625,10 @@
+ 			<skill id="32909" level="1" /> <!-- Rule of Looting -->
+ 			<skill id="32675" level="1" /> <!-- Improved Immunity -->
+ 			<skill id="14804" level="10" /> <!-- Damage Reflection Resistance -->
++			<skill id="34814" level="9" /> <!-- Critical Rate Resistance -->
++			<skill id="34815" level="9" /> <!-- Critical Damage Resistance -->
++			<skill id="34820" level="7" /> <!-- Received Damage Resistance -->
++			<skill id="34108" level="1" /> <!-- Blade of Souls -->
+ 		</skillList>
+ 		<dropLists>
+ 			<drop>
+diff --git dist/game/data/stats/skills/34100-34199.xml dist/game/data/stats/skills/34100-34199.xml
+index e51f54c..719f945 100644
+--- dist/game/data/stats/skills/34100-34199.xml
++++ dist/game/data/stats/skills/34100-34199.xml
+@@ -110,44 +110,118 @@
+ 		<!-- Common. -->
+ 		<icon>icon.skill0000</icon>
+ 		<operateType>A1</operateType>
+-		<targetType>ENEMY</targetType>
+-		<affectScope>SINGLE</affectScope>
+ 		<castRange>400</castRange>
+-		<coolTime>1000</coolTime>
++		<hitTime>1300</hitTime>
++		<reuseDelay>1000</reuseDelay> 
+ 		<effectPoint>-100</effectPoint>
+-		<hitTime>1500</hitTime>
+-		<isMagic>1</isMagic>
+-		<magicCriticalRate>5</magicCriticalRate>
+-		<reuseDelay>10</reuseDelay>
++		<attributeType>DARK</attributeType>
++		<attributeValue>2000</attributeValue>
++		<magicCriticalRate>-5</magicCriticalRate>
++		<magicLevel>127</magicLevel>
++		<effectRange>400</effectRange>
++		<fanRange>0;0;500;500</fanRange>
++		<coolTime>600</coolTime>
++		<targetType>ENEMY</targetType>
++		<affectScope>SQUARE</affectScope>
++		<affectObject>NOT_FRIEND</affectObject>
++		<effects>
++			<effect name="MagicalDamage">
++				<power>28000</power>
++			</effect>
++		</effects>
+ 	</skill>
+ 	<skill id="34109" toLevel="1" name="Blade Temptation">
+ 		<!-- Pulls enemies around the target stunning them. -->
+ 		<icon>icon.skill0100</icon>
+-		<operateType>A1</operateType>
+-		<targetType>ENEMY</targetType>
+-		<abnormalTime>3</abnormalTime>
+-		<affectScope>SINGLE</affectScope>
+-		<castRange>2000</castRange>
+-		<coolTime>1000</coolTime>
+-		<effectPoint>-100</effectPoint>
+-		<hitTime>1500</hitTime>
+-		<isMagic>1</isMagic>
++		<abnormalLevel>4</abnormalLevel>
++		<abnormalTime>6</abnormalTime>
++		<abnormalType>KNOCKDOWN</abnormalType>
++		<abnormalVisualEffect>KNOCKDOWN</abnormalVisualEffect>
++		<activateRate>70</activateRate>
++		<lvlBonusRate>20</lvlBonusRate>
++		<basicProperty>PHYSICAL</basicProperty>
++		<affectRange>150</affectRange>
++		<operateType>DA2</operateType>
+ 		<magicCriticalRate>5</magicCriticalRate>
+-		<reuseDelay>10</reuseDelay>
++		<magicLevel>127</magicLevel>
++		<nextAction>ATTACK</nextAction>
++		<castRange>2000</castRange>
++		<hitTime>5000</hitTime>
++		<coolTime>1200</coolTime>
++		<reuseDelay>10000</reuseDelay>
++		<effectPoint>-711</effectPoint>
++		<hitCancelTime>1</hitCancelTime>
++		<effectRange>2000</effectRange>
++		<isDebuff>true</isDebuff>
++		<trait>KNOCKDOWN</trait>
++		<affectRange>500</affectRange>
++		<targetType>ENEMY</targetType>
++		<affectScope>RANGE</affectScope>
++		<affectObject>NOT_FRIEND</affectObject>
++		<effects>
++			<effect name="PhysicalDamage">
++				<power>158600000</power>
++				<overHit>true</overHit>
++				<criticalChance>100</criticalChance>
++			</effect>
++			<effect name="KnockBack">
++				<speed>400</speed>
++				<distance>150</distance>
++				<knockDown>true</knockDown>
++			</effect>
++			<effect name="DefenceTrait">
++				<HOLD>100</HOLD>
++				<KNOCKDOWN>100</KNOCKDOWN>
++				<SHOCK>100</SHOCK>
++				<AIRBIND>100</AIRBIND>
++				<SLEEP>100</SLEEP>
++				<KNOCKBACK>100</KNOCKBACK>
++				<CHANGEBODY>100</CHANGEBODY>
++			</effect>
++			<effect name="BlockActions">
++				<allowedSkills>10279;10517;10025;10776;11770;1904;11264;11093;13314;1912;7002;18721;18722;28203;30516;35190</allowedSkills>
++			</effect>
++		</effects>
+ 	</skill>
+ 	<skill id="34110" toLevel="1" name="Price for Temptation">
+ 		<!-- Immediately after pulling. -->
+ 		<icon>icon.skill10262</icon>
+-		<operateType>A1</operateType>
+-		<targetType>SELF</targetType>
+-		<affectScope>SINGLE</affectScope>
+-		<castRange>-1</castRange>
+-		<coolTime>1000</coolTime>
++		<isMagic>7</isMagic>
++		<hitTime>2000</hitTime>
++		<coolTime>500</coolTime>
+ 		<effectPoint>-100</effectPoint>
+-		<hitTime>1500</hitTime>
+-		<isMagic>1</isMagic>
++		<activateRate>900</activateRate>
++		<magicLevel>105</magicLevel>
++		<operateType>A1</operateType>
++		<coolTime>800</coolTime>
++		<reuseDelay>5000</reuseDelay>
+ 		<magicCriticalRate>5</magicCriticalRate>
+-		<reuseDelay>10</reuseDelay>
++		<targetType>ENEMY</targetType>
++		<affectScope>RANGE</affectScope>
++		<affectObject>NOT_FRIEND</affectObject>
++		<basicProperty>NONE</basicProperty>
++		<magicCriticalRate>-5</magicCriticalRate>
++		<magicLevel>127</magicLevel>
++		<hitCancelTime>1</hitCancelTime>
++		<abnormalLevel>1</abnormalLevel>
++		<abnormalTime>1</abnormalTime>
++		<trait>SHOCK</trait>
++		<attributeType>DARK</attributeType>
++		<attributeValue>2000</attributeValue>
++		<affectRange>400</affectRange>
++			<effects>
++			<effect name="PhysicalDamage">
++				<power>9800000</power>
++				<overHit>true</overHit>
++				<criticalChance>
++					<value fromLevel="1" toLevel="9">9</value>
++					<value fromLevel="1" toLevel="9" fromSubLevel="2001" toSubLevel="2020">{base + (base / 100 * subIndex)}</value>
++				</criticalChance>
++			</effect>
++			<effect name="BlockActions">
++				<allowedSkills>10279;10517;10025;10776;11770;1904;11264;11093;13314;1912;7002;18721;18722;28203;30516;35190</allowedSkills>
++			</effect>
++		</effects>
+ 	</skill>
+ 	<skill id="34111" toLevel="2" name="Teleport">
+ 		<!-- Level 1: Presentation skill for starting teleportation. -->
+@@ -181,17 +255,54 @@
+ 		<!-- A wave moves in all directions dealing AoE damage and knocking down. -->
+ 		<icon>icon.skill3080</icon>
+ 		<operateType>A1</operateType>
+-		<targetType>SELF</targetType>
+-		<abnormalTime>10</abnormalTime>
+-		<affectScope>SINGLE</affectScope>
+-		<castRange>-1</castRange>
+-		<coolTime>1000</coolTime>
+-		<effectPoint>-1</effectPoint>
+-		<hitTime>4000</hitTime>
+ 		<isDebuff>true</isDebuff>
+-		<isMagic>1</isMagic>
+-		<magicCriticalRate>5</magicCriticalRate>
+-		<reuseDelay>10</reuseDelay>
++		<castRange>1000</castRange>
++		<reuseDelay>10000</reuseDelay>
++		<hitTime>5500</hitTime>
++		<coolTime>1100</coolTime>
++		<effectPoint>-100</effectPoint>
++		<abnormalType>KNOCKDOWN</abnormalType>
++		<abnormalVisualEffect>KNOCKDOWN</abnormalVisualEffect>
++		<basicProperty>NONE</basicProperty>
++		<magicCriticalRate>-5</magicCriticalRate>
++		<magicLevel>127</magicLevel>
++		<abnormalLevel>1</abnormalLevel>
++		<abnormalTime>7</abnormalTime>
++		<trait>KNOCKDOWN</trait>
++		<activateRate>60</activateRate>
++		<attributeType>DARK</attributeType>
++		<attributeValue>2000</attributeValue>
++		<affectRange>1100</affectRange>
++		<targetType>SELF</targetType>
++		<affectScope>POINT_BLANK</affectScope>
++		<affectObject>NOT_FRIEND</affectObject>
++		<effects>
++			<effect name="PhysicalDamage">
++				<power>158600000</power>
++				<overHit>true</overHit>
++				<criticalChance>
++					<value fromLevel="1" toLevel="9">9</value>
++					<value fromLevel="1" toLevel="9" fromSubLevel="2001" toSubLevel="2020">{base + (base / 100 * subIndex)}</value>
++				</criticalChance>
++			</effect>
++			<effect name="KnockBack">
++				<speed>400</speed>
++				<distance>150</distance>
++			<knockDown>true</knockDown>
++			</effect>
++			<effect name="DefenceTrait">
++				<HOLD>100</HOLD>
++				<KNOCKDOWN>100</KNOCKDOWN>
++				<SHOCK>100</SHOCK>
++				<AIRBIND>100</AIRBIND>
++				<SLEEP>100</SLEEP>
++				<KNOCKBACK>100</KNOCKBACK>
++				<CHANGEBODY>100</CHANGEBODY>
++			</effect>
++			<effect name="BlockActions">
++				<allowedSkills>10279;10517;10025;10776;11770;1904;11264;11093;13314;1912;7002;18721;18722;28203;30516;35190</allowedSkills>
++			</effect>
++		</effects>
+ 	</skill>
+ 	<skill id="34114" toLevel="1" name="Gate of Thousand Flashes">
+ 		<!-- Deals great damage to nearby enemies knocking them down. -->
+@@ -212,34 +323,80 @@
+ 	<skill id="34115" toLevel="1" name="Tear to Shreds">
+ 		<!-- Dark energy strikes the target dealing damage and knocking them down. -->
+ 		<icon>icon.skill33915</icon>
++		<abnormalLevel>1</abnormalLevel>
++		<abnormalTime>5</abnormalTime>
++		<abnormalType>KNOCKDOWN</abnormalType>
++		<abnormalVisualEffect>KNOCKDOWN</abnormalVisualEffect>
++		<basicProperty>PHYSICAL</basicProperty>
++		<attributeType>DARK</attributeType>
++		<attributeValue>2000</attributeValue>
++		<activateRate>50</activateRate>
++		<affectRange>1000</affectRange>
+ 		<operateType>A1</operateType>
+-		<targetType>SELF</targetType>
+-		<abnormalTime>10</abnormalTime>
+-		<affectScope>SINGLE</affectScope>
+-		<castRange>-1</castRange>
+-		<coolTime>1000</coolTime>
+-		<effectPoint>-100</effectPoint>
+-		<hitTime>2500</hitTime>
++		<magicCriticalRate>50</magicCriticalRate>
++		<magicLevel>127</magicLevel>
++		<castRange>500</castRange>
++		<hitTime>2600</hitTime>
++		<coolTime>1200</coolTime>
++		<reuseDelay>5000</reuseDelay>
++		<effectPoint>-716</effectPoint>
+ 		<isDebuff>true</isDebuff>
+-		<isMagic>1</isMagic>
+-		<magicCriticalRate>5</magicCriticalRate>
+-		<reuseDelay>10</reuseDelay>
++		<activateRate>70</activateRate>
++		<hitCancelTime>1</hitCancelTime>
++		<effectRange>2600</effectRange>
++		<trait>KNOCKDOWN</trait>
++		<isMagic>0</isMagic>
++		<targetType>SELF</targetType>
++		<affectScope>SQUARE</affectScope>
++		<affectObject>NOT_FRIEND</affectObject>
++		<fanRange>0;0;1400;250</fanRange>
++		<effects>
++			<effect name="PhysicalDamage">
++				<power>169600000</power>
++				<overHit>true</overHit>
++				<criticalChance>
++					<value fromLevel="1" toLevel="9">9</value>
++					<value fromLevel="1" toLevel="9" fromSubLevel="2001" toSubLevel="2020">{base + (base / 100 * subIndex)}</value>
++				</criticalChance>
++			</effect>
++			<effect name="KnockBack">
++				<speed>400</speed>
++				<distance>250</distance>
++				<knockDown>true</knockDown>
++			</effect>
++			<effect name="DefenceTrait">
++				<HOLD>100</HOLD>
++				<KNOCKDOWN>100</KNOCKDOWN>
++				<SHOCK>100</SHOCK>
++				<AIRBIND>100</AIRBIND>
++				<SLEEP>100</SLEEP>
++				<KNOCKBACK>100</KNOCKBACK>
++				<CHANGEBODY>100</CHANGEBODY>
++			</effect>
++			<effect name="BlockActions">
++				<allowedSkills>10279;10517;10025;10776;11770;1904;11264;11093;13314;1912;7002;18721;18722;28203;30516;35190</allowedSkills>
++			</effect>
++		</effects>
+ 	</skill>
+ 	<skill id="34116" toLevel="1" name="Dark Shadow Clash">
+ 		<!-- Deals great damage to nearby enemies knocking them down. The more enemies in the area of attack, the more damage they receive. -->
+ 		<icon>icon.skill1064</icon>
+-		<operateType>DA2</operateType>
+-		<targetType>ENEMY</targetType>
+-		<abnormalTime>10</abnormalTime>
+-		<affectScope>SINGLE</affectScope>
+-		<castRange>2000</castRange>
+-		<coolTime>1000</coolTime>
++		<isMagic>7</isMagic>
++		<hitTime>6000</hitTime>
++		<coolTime>500</coolTime>
+ 		<effectPoint>-100</effectPoint>
+-		<hitTime>5000</hitTime>
+-		<isDebuff>true</isDebuff>
+-		<isMagic>1</isMagic>
++		<affectLimit>5-12</affectLimit>
++		<abnormalTime>5</abnormalTime>
++		<abnormalLevel>2</abnormalLevel>
++		<activateRate>900</activateRate>
++		<magicLevel>105</magicLevel>
++		<operateType>A1</operateType>
++		<coolTime>500</coolTime>
++		<reuseDelay>8000</reuseDelay>
+ 		<magicCriticalRate>5</magicCriticalRate>
+-		<reuseDelay>10</reuseDelay>
++		<targetType>ENEMY</targetType>
++		<affectScope>POINT_BLANK</affectScope>
++		<affectObject>NOT_FRIEND</affectObject>
+ 	</skill>
+ 	<skill id="34117" toLevel="1" name="Dark Protection">
+ 		<!-- Dark energy protects you. Strikes attacking enemies with Dark Attack knocking them down. -->
+diff --git dist/game/data/stats/skills/34300-34399.xml dist/game/data/stats/skills/34300-34399.xml
+index 092f575..608da94 100644
+--- dist/game/data/stats/skills/34300-34399.xml
++++ dist/game/data/stats/skills/34300-34399.xml
+@@ -692,7 +692,37 @@
+ 		<!-- Level 1: Presentation skill for starting teleportation. -->
+ 		<!-- Level 2: Presentation skill for finishing teleportation. -->
+ 		<icon>icon.skill10516</icon>
++		<abnormalTime>2</abnormalTime>
++		<abnormalLevel>2</abnormalLevel>
++		<activateRate>60</activateRate>
++		<affectRange>2000</affectRange>
++		<basicProperty>NONE</basicProperty>
++		<abnormalType>STUN</abnormalType>
++		<abnormalVisualEffect>STUN</abnormalVisualEffect>
++		<effectPoint>-5000</effectPoint>
++		<activateRate>900</activateRate>
++		<effectRange>400</effectRange>
++		<isDebuff>true</isDebuff>
++		<magicLevel>120</magicLevel>
+ 		<operateType>A1</operateType>
++		<coolTime>500</coolTime>
++		<reuseDelay>1000</reuseDelay>
++		<magicCriticalRate>5</magicCriticalRate>
++		<trait>PULL</trait>
++		<affectRange>2000</affectRange>
++		<targetType>SELF</targetType>
++		<affectScope>POINT_BLANK</affectScope>
++		<affectObject>NOT_FRIEND</affectObject>
++		<hitTime>300</hitTime>
++		<isDebuff>true</isDebuff>
++		<effects>
++			<effect name="PullBack">
++				<speed>600</speed>
++			</effect>
++			<effect name="BlockActions">
++				<allowedSkills>10279;10517;10025;10776;11770;1904;11264;11093;13314;1912;7002;18721;18722;28203;30516;35190</allowedSkills>
++			</effect>
++		</effects>
+ 	</skill>
+ 	<skill id="34389" toLevel="1" name="World End">
+ 		<!-- Mental Attack deals great and even fatal damage to nearby enemies and forces them to dance. -->
+@@ -712,7 +742,22 @@
+ 	<skill id="34392" toLevel="1" name="Tear to Shreds">
+ 		<!-- Presentation Skill. -->
+ 		<icon>icon.skill10516</icon>
++		<isMagic>7</isMagic>
++		<hitTime>5000</hitTime>
++		<coolTime>500</coolTime>
++		<effectPoint>-100</effectPoint>
++		<affectLimit>5-12</affectLimit>
++		<abnormalTime>5</abnormalTime>
++		<abnormalLevel>2</abnormalLevel>
++		<activateRate>900</activateRate>
++		<magicLevel>105</magicLevel>
+ 		<operateType>A1</operateType>
++		<coolTime>500</coolTime>
++		<reuseDelay>1000</reuseDelay>
++		<magicCriticalRate>5</magicCriticalRate>
++		<targetType>ENEMY</targetType>
++		<affectScope>POINT_BLANK</affectScope>
++		<affectObject>NOT_FRIEND</affectObject>
+ 	</skill>
+ 	<skill id="34393" toLevel="1" name="Tear to Shreds">
+ 		<!-- Dark energy strikes the target knocking them down. -->
+diff --git dist/game/data/zones/pvp.xml dist/game/data/zones/pvp.xml
+index cc2ebb3..f68f46a 100644
+--- dist/game/data/zones/pvp.xml
++++ dist/game/data/zones/pvp.xml
+@@ -129,4 +129,24 @@
+ 		<node X="-87121" Y="211950" />
+ 		<node X="-82180" Y="211846" />
+ 	</zone>
++	<zone name="Eigis_Seat_Zone" type="ArenaZone" shape="NPoly" minZ="-4000" maxZ="4900">
++		<node X="-20955" Y="-222973" />
++		<node X="-23272" Y="-223768" />
++		<node X="-24520" Y="-224200" />
++		<node X="-24968" Y="-223352" />
++		<node X="-25512" Y="-222264" />
++		<node X="-25976" Y="-221288" />
++		<node X="-26035" Y="-218613" />
++		<node X="-26020" Y="-218313" />
++		<node X="-25646" Y="-217960" /> 
++		<node X="-23748" Y="-219030" />
++		<node X="-22744" Y="-219512" />
++		<node X="-22616" Y="-219704" />
++		<node X="-21659" Y="-220231" />
++		<node X="-21414" Y="-220124" />
++		<node X="-21336" Y="-220360" />
++		<node X="-21624" Y="-220984" />
++		<node X="-21208" Y="-221752" />
++		<node X="-20872" Y="-222712" />
++    </zone>
+ </list>
+\ No newline at end of file
